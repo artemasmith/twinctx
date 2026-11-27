@@ -17,6 +17,13 @@ from twinctx.contracts import EDGE_COLS, EDGE_SCHEMA_VERSION, Atom, COLS, now
 
 from .memory_history import family_query
 
+# Additive upgrade for files created with the original five-column atoms table.
+_LEGACY_ATOM_FIELDS = (
+    "doc_type text", "title text", "heading text", "start_line int", "end_line int", "updated text",
+    "observed_at text", "valid_from text", "valid_to text", "trust real default 1.0", "ord int default 0",
+    "supersedes text",
+)
+
 SCHEMA = """
 create table if not exists atoms(
   id text primary key, source text not null, corpus text not null, kind text not null,
@@ -64,6 +71,8 @@ class SqliteStore:
         self._pragma("pragma busy_timeout=30000")   # multi-process writers on one host: wait, don't fail
         self._pragma("pragma journal_mode=WAL")     # readers never block the writer and vice versa
         self._pragma("pragma synchronous=NORMAL")   # durable across app crashes; power loss risks one checkpoint
+        if not ro:
+            self._upgrade_atom_columns()
         self.edges_ok = True   # False on a read-only db with old edges: search works, graph does not
         try:
             cols = {r[1] for r in self.db.execute("pragma table_info(edges)")}
@@ -75,6 +84,19 @@ class SqliteStore:
             self.db.executescript(SCHEMA)
         except sqlite3.OperationalError:
             self.edges_ok = False
+
+    def _upgrade_atom_columns(self) -> None:
+        # CREATE TABLE IF NOT EXISTS leaves the layout of an older file untouched.
+        # Add missing fields before building any indexes that reference them.
+        existing = {r[1] for r in self.db.execute("pragma table_info(atoms)")}
+        if not existing or set(COLS) <= existing:
+            return
+        with self.db:
+            self.db.execute("begin immediate")
+            existing = {r[1] for r in self.db.execute("pragma table_info(atoms)")}
+            for declaration in _LEGACY_ATOM_FIELDS:
+                if declaration.split()[0] not in existing:
+                    self.db.execute(f"alter table atoms add column {declaration}")
 
     def _pragma(self, stmt: str) -> None:
         try:

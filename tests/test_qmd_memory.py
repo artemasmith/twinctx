@@ -1,9 +1,8 @@
 import hashlib
-import pytest
 
+import pytest
 from stores.sqlite import SqliteStore
-from twinctx import AssembleRequest, Atom, Engine
-from twinctx import qmd_client
+from twinctx import AssembleRequest, Atom, Engine, qmd_client
 from twinctx.qmd_memory import document
 
 
@@ -167,3 +166,30 @@ def test_watch_indexes_decisions_written_after_start(tmp_path):
     finally:
         watcher.terminate()
         watcher.wait(timeout=5)
+
+
+def test_old_sqlite_keeps_decisions_when_upgrading_the_index(tmp_path, monkeypatch):
+    import sqlite3
+
+    from twinctx.contracts import EDGE_COLS
+
+    monkeypatch.setenv("TWINCTX_MEMORY_CANON", str(tmp_path / "memory.jsonl"))
+    path = tmp_path / "legacy.db"
+    with sqlite3.connect(path) as db:
+        db.executescript(
+            "create table atoms(id text primary key, source text, corpus text, kind text, text text);"
+            "insert into atoms values('original', 'memory/policy', 'memory', 'memory', 'Earlier policy');"
+            "create table edges(src text, dst text, kind text, weight real, primary key(src,dst,kind));"
+        )
+
+    store = SqliteStore(path)
+    assert set(EDGE_COLS) <= {
+        row[1] for row in store.db.execute("pragma table_info(edges)")
+    }
+    assert store.get(["original"])["original"].text == "Earlier policy"
+    fact(store, "updated", "Current policy", "2026-03-01", parent="original")
+    assert {a.id for a in store.memory_family("original")} == {"original", "updated"}
+    store.db.close()
+    reopened = SqliteStore(path)
+    assert reopened.get(["updated"])["updated"].supersedes == "original"
+    reopened.db.close()
