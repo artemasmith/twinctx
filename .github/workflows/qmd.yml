@@ -45,6 +45,8 @@ jobs:
           mkdir -p "$VAULT_DIR"
           printf '%s\n' '---' 'project: demo' '---' '# Резервирование' 'Резервные копии хранятся сорок пять дней.' > "$VAULT_DIR/archive.md"
           old=$(twinctx remember 'Срок хранения резервных копий базы составляет тридцать дней.' --about retention --valid-from 2026-01-01)
+          twinctx remember 'Командировки согласует руководитель отдела до покупки билетов.' --about travel --valid-from 2026-01-01
+          twinctx remember 'Нового разработчика нанимаем после технического собеседования.' --about hiring --valid-from 2026-01-01
           python -m twinctx.qmd_refresh "$VAULT_DIR" "$state" deploy/qmd/server.mjs
           node deploy/qmd/server.mjs serve "$state" &
           pid=$!
@@ -63,6 +65,10 @@ jobs:
           python - <<'PYTHON'
           import json, os, subprocess
           query = "Когда пора удалять бэкапы?"
+          from twinctx.qmd_client import hits
+          for probe in (query, "Сколько времени держать бэкап?", "Как получить визу на Марс?", "Какова масса Сатурна?"):
+              scores = hits("/memory", {"q": probe}, 6)
+              print(probe, [(h["id"] == os.environ["OLD_ID"], round(h["score"], 3)) for h in scores], flush=True)
           for at, expected in [("2026-01-15", os.environ["OLD_ID"]), ("2026-03-01", os.environ["NEW_ID"])]:
               result = json.loads(subprocess.check_output(["twinctx", "query", query, "--json", "--corpus", "memory", "--as-of", at]))
               items = result["manifest"]["items"]
