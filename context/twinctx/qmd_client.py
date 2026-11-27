@@ -1,4 +1,5 @@
 """Bounded requests to the TwinCtx QMD sidecar on loopback."""
+
 import json
 import urllib.parse
 import urllib.request

@@ -1,4 +1,5 @@
 """SQL shared by both adapters. Read ancestors and successors in one statement snapshot."""
+
 from twinctx.contracts import COLS
 
 
