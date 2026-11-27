@@ -92,6 +92,21 @@ def cmd_query(a):
     )
 
 
+def cmd_project_query(a):
+    from stores import online_search
+    from .project_search import answer_project
+
+    store = open_store()
+    try:
+        print(answer_project(a.project, a.query, search=online_search(store).search,
+                             vault_root=Path(os.environ.get("VAULT_DIR", HOME / "vault"))))
+    finally:
+        if hasattr(store, "close"):
+            store.close()
+        else:
+            store.db.close()
+
+
 def cmd_remember(a):
     st = open_store()
 
@@ -323,6 +338,10 @@ def main():
     q.add_argument("--project", default="", help="restrict graph edges to one project")
     q.add_argument("--json", action="store_true")
     q.set_defaults(fn=cmd_query)
+    project = sub.add_parser("project-query", help="search current project documents, with optional QMD fallback")
+    project.add_argument("project")
+    project.add_argument("query")
+    project.set_defaults(fn=cmd_project_query)
     r = sub.add_parser("remember")
     r.add_argument("text")
     r.add_argument("--about", default="")

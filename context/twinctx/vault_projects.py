@@ -235,8 +235,6 @@ def active_revision(documents: dict[str, ProjectDocument], relative: str) -> str
             return None
         visited.add(oldest)
         oldest = previous[oldest]
-    if not successors[oldest]:
-        return None
     current = oldest
     while current not in uncertain:
         following = successors[current]

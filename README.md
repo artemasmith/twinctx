@@ -47,6 +47,42 @@ python -m pip install '.[mcp]'
 
 Индексатор также читает задачи из `$HARNESS_HOME/workspace/<проект>/.tasks/*.yaml` и журнал из `$HARNESS_HOME/journal/`. Интеграция с Hermes в этой поставке доступна через MCP.
 
+## Семантический поиск проектных документов с QMD
+
+`twinctx project-query` и MCP-инструмент `context_project_search(project, query)` ищут в Markdown выбранного проекта. Сначала TwinCtx проверяет свой индекс. Если поиск завершился с пустой выдачей и включён QMD, вопрос поступает в векторный индекс этого проекта. Если первичный поиск дал сбой, TwinCtx сообщает об этом.
+
+Проект задаётся в начале Markdown-файла в каталоге `VAULT_DIR`. Пример содержимого `archive.md`:
+
+```markdown
+---
+project: demo
+---
+# Хранение архива
+Резервные копии хранятся сорок пять дней.
+```
+
+TwinCtx сверяет найденный путь и SHA-256 с исходным файлом и проверяет цепочку редакций. В новой версии документа можно указать `supersedes: archive.md`. Ответ содержит цитату и ссылку на действующую редакцию. Если QMD нашёл смысловое совпадение, а подходящую цитату выделить не удалось, инструмент возвращает ссылку на возможный источник. Неоднозначная цепочка редакций даёт ответ о неопределённости.
+
+**Запуск на Linux-сервере.** Нужны Node.js 22+, npm, установленный TwinCtx и копия этого репозитория. Сборка и обслуживание QMD используют модель EmbedGemma на машине сервиса. При первой сборке QMD скачивает веса. Сервис слушает `127.0.0.1:26358`. Выполните из корня репозитория:
+
+```sh
+export HARNESS_HOME="$HOME/twinctx-data" VAULT_DIR="$HOME/vault"
+export TWINCTX_STORE=sqlite TWINCTX_EMBED=none
+npm ci --prefix deploy/qmd
+python -m twinctx.qmd_refresh "$VAULT_DIR" "$HARNESS_HOME/qmd" deploy/qmd/server.mjs
+node deploy/qmd/server.mjs serve "$HARNESS_HOME/qmd"
+```
+
+В другом терминале с теми же настройками хранилища проверьте готовность сервиса и выполните запрос:
+
+```sh
+curl -f http://127.0.0.1:26358/health
+export TWINCTX_QMD_ENABLED=1
+twinctx project-query demo 'Когда удаляют бэкапы?'
+```
+
+Для MCP передайте `TWINCTX_QMD_ENABLED=1` и `VAULT_DIR` в окружение процесса `twinctx-mcp`. После изменения документов повторите `twinctx index` и команду `qmd_refresh`. Обновление переключает QMD на новый индекс только после завершения сборки. Храните каталог индекса за пределами Vault. Зависимости QMD и веса модели распространяются на своих условиях. [QMD](https://github.com/tobi/qmd) · [EmbedGemma](https://huggingface.co/google/embeddinggemma-300m)
+
 ## Автор и лицензия
 
 Автор — **Артём Кузнецов**. Если показываете TwinCtx в обзоре, статье или демо, буду рад ссылке на [репозиторий проекта](https://github.com/artemasmith/twinctx).

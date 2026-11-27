@@ -32,4 +32,4 @@ test = ["pytest>=8", "numpy>=1.26", "mcp>=1.10,<3"]
 packages = ["context/twinctx", "context/stores", "context/privacy"]
 
 [tool.hatch.build.targets.sdist]
-include = ["/context", "/tests", "/LICENSE", "/NOTICE", "/README.md", "/pyproject.toml"]
+include = ["/context", "/deploy/qmd", "/tests", "/LICENSE", "/NOTICE", "/README.md", "/pyproject.toml"]

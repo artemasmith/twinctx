@@ -60,6 +60,15 @@ def _log(tool: str, **kw) -> None:
 
 
 @server.tool()
+def context_project_search(project: str, query: str) -> str:
+    """Find a current Markdown source in one named project. Uses the optional QMD fallback for semantic matches."""
+    from .project_search import answer_project
+
+    return answer_project(project, query, search=_engine.search,
+                          vault_root=Path(os.environ.get("VAULT_DIR", HOME / "vault")))
+
+
+@server.tool()
 def context_assemble(
     query: str,
     budget_tokens: int = 2500,

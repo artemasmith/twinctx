@@ -1,0 +1,54 @@
+name: QMD integration
+on:
+  workflow_dispatch:
+  push:
+    paths:
+      - 'deploy/qmd/**'
+      - 'context/twinctx/project_search.py'
+      - 'context/twinctx/qmd_refresh.py'
+      - 'context/twinctx/vault_projects.py'
+      - '.github/workflows/qmd.yml'
+
+permissions:
+  contents: read
+
+jobs:
+  semantic-search:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+      - name: Install TwinCtx and QMD
+        run: |
+          python -m pip install .
+          npm ci --prefix deploy/qmd
+      - name: Find a document through the vector index
+        env:
+          TWINCTX_STORE: sqlite
+          TWINCTX_EMBED: none
+          TWINCTX_QMD_ENABLED: '1'
+        run: |
+          set -eu
+          export HARNESS_HOME="$RUNNER_TEMP/twinctx"
+          export VAULT_DIR="$HARNESS_HOME/vault"
+          state="$HARNESS_HOME/qmd"
+          mkdir -p "$VAULT_DIR"
+          printf '%s\n' '---' 'project: demo' '---' '# Резервирование' 'Резервные копии хранятся сорок пять дней.' > "$VAULT_DIR/archive.md"
+          python -m twinctx.qmd_refresh "$VAULT_DIR" "$state" deploy/qmd/server.mjs
+          node deploy/qmd/server.mjs serve "$state" &
+          pid=$!
+          trap 'kill "$pid" 2>/dev/null || true' EXIT
+          curl -fsS --retry 90 --retry-delay 2 --retry-all-errors http://127.0.0.1:26358/health
+          # The primary SQLite index is intentionally empty so both calls exercise QMD.
+          quote=$(twinctx project-query demo 'Сколько дней хранятся резервные копии?')
+          echo "$quote"
+          [[ "$quote" == *'сорок пять дней'* && "$quote" == *'vault/archive.md'* ]]
+          source=$(twinctx project-query demo 'Когда удаляют бэкапы?')
+          echo "$source"
+          [[ "$source" == *'vault/archive.md'* ]]
