@@ -23,6 +23,7 @@ from .connectors import is_raw_telegram_source
 from .contracts import now
 from .engine import AssembleRequest
 from .limits import check_budget_tokens, check_k, check_memory_text, check_read_limits
+from .qmd_memory import is_current
 from .memory import MemoryDraft, remember
 
 try:  # MCP SDK 2.x
@@ -77,6 +78,7 @@ def context_assemble(
     graph: bool | None = None,
     hops: int = 2,
     project: str = "",
+    as_of: str = "",
 ) -> str:
     """Relevant context for a question, packed under a token budget, with provenance per chunk.
     corpora: optional prefixes — "vault", "code:<repo>", "tasks", "incidents", "memory".
@@ -89,6 +91,7 @@ def context_assemble(
     res = _engine.assemble(
         AssembleRequest(
             query=query,
+            as_of=as_of,
             budget_tokens=budget_tokens,
             corpora=corpora or [],
             include_memory=include_memory,
@@ -148,13 +151,16 @@ def context_search(query: str, k: int = 8) -> list[dict]:
 
 
 @server.tool()
-def context_read(source: str, start_line: int = 0, end_line: int = 0, max_chars: int = 8000) -> str:
+def context_read(source: str, start_line: int = 0, end_line: int = 0, max_chars: int = 8000, as_of: str = "") -> str:
     """Chunks of one source (as returned by search/assemble), optionally limited to a line range.
     Output is capped at max_chars: a truncation marker names the next line to continue from —
     a silently truncated read makes the model answer from a partial source (and lie about it)."""
     started = time.monotonic()
     check_read_limits(max_chars, start_line, end_line)
     atoms = [] if is_raw_telegram_source(source) else _store.by_source(source)
+    if source.startswith("memory/"):
+        at = as_of or now()
+        atoms = [a for a in atoms if a.kind != "memory" or is_current(_store, a, at)]
     parts = [
         a for a in atoms if (not start_line or a.end_line >= start_line) and (not end_line or a.start_line <= end_line)
     ]

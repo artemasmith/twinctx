@@ -15,12 +15,15 @@ from pathlib import Path
 
 from twinctx.contracts import EDGE_COLS, EDGE_SCHEMA_VERSION, Atom, COLS, now
 
+from .memory_history import family_query
+
 SCHEMA = """
 create table if not exists atoms(
   id text primary key, source text not null, corpus text not null, kind text not null,
   doc_type text, title text, heading text, text text not null,
   start_line int, end_line int, updated text, observed_at text,
   valid_from text, valid_to text, trust real default 1.0, ord int default 0, supersedes text);
+create index if not exists memory_supersedes on atoms(supersedes) where kind='memory';
 create index if not exists atoms_source on atoms(source);
 create virtual table if not exists atoms_fts using fts5(
   atom_id unindexed, title, heading, text, tokenize='unicode61 remove_diacritics 2');
@@ -148,6 +151,10 @@ class SqliteStore:
             return
         with self.db:
             self.db.execute("update atoms set valid_to=? where id=? and kind='memory'", (valid_to, atom_id))
+
+    def memory_family(self, seed: str) -> list[Atom]:
+        rows = self.db.execute(family_query("atoms"), {"seed": seed})
+        return [Atom(**{k: v for k, v in zip(COLS, row) if v is not None}) for row in rows]
 
     def memories(self) -> list[Atom]:
         cur = self.db.execute(f"select {','.join(COLS)} from atoms where kind='memory' order by valid_from, id")

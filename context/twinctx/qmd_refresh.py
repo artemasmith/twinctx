@@ -22,8 +22,10 @@ import shutil
 import sqlite3
 import subprocess
 import tempfile
+import time
 from pathlib import Path
 
+from twinctx.qmd_memory import document, filename
 from twinctx.vault_projects import read_document, scan_projects
 
 
@@ -59,9 +61,11 @@ def _previous_manifest(current):
         return None
 
 
-def refresh(vault: Path, state: Path, command) -> bool:
-    vault = vault.resolve(strict=True)
-    if state.resolve().is_relative_to(vault):
+def refresh(vault: Path | None, state: Path, command, *, store=None) -> bool:
+    if vault is None and store is None:
+        raise ValueError("memory-only indexing requires TWINCTX_STORE")
+    vault = vault.resolve(strict=True) if vault else None
+    if vault and state.resolve().is_relative_to(vault):
         raise ValueError("QMD state must be outside the vault")
     state.mkdir(mode=0o700, parents=True, exist_ok=True)
     state = state.resolve()
@@ -70,8 +74,15 @@ def refresh(vault: Path, state: Path, command) -> bool:
     current = state / "current"
     with (state / "refresh.lock").open("ab") as lock:
         fcntl.flock(lock, fcntl.LOCK_EX | fcntl.LOCK_NB)
-        documents = scan_projects(vault)
+        documents = scan_projects(vault) if vault else {}
         manifest = _manifest(documents)
+        memories = {}
+        if store is not None:
+            memories = {filename(a.id): (a.id, document(a)) for a in store.memories() if a.corpus == "memory"}
+            manifest["memory"] = {
+                path: {"id": identity, "sha256": hashlib.sha256(content).hexdigest()}
+                for path, (identity, content) in memories.items()
+            }
         if manifest == _previous_manifest(current):
             return False
         generation = Path(tempfile.mkdtemp(prefix="generation-", dir=generations))
@@ -87,11 +98,16 @@ def refresh(vault: Path, state: Path, command) -> bool:
                 destination.parent.mkdir(mode=0o700, parents=True, exist_ok=True)
                 destination.write_bytes(content)
                 destination.chmod(0o600)
+            if memories:
+                memory_dir = generation / "docs" / "@memory"
+                memory_dir.mkdir(mode=0o700)
+                for name, (_, content) in memories.items():
+                    (memory_dir / name).write_bytes(content)
             (generation / "manifest.json").write_text(json.dumps(manifest, ensure_ascii=False))
             subprocess.run([*command, str(generation)], check=True, timeout=540)
             if not _index_ready(generation / "index.sqlite"):
                 raise RuntimeError("QMD did not create an index")
-            if documents != scan_projects(vault):
+            if vault and documents != scan_projects(vault):
                 raise ValueError("Vault changed while building the index")
             pending.symlink_to(generation.relative_to(state), target_is_directory=True)
             os.replace(pending, current)
@@ -115,17 +131,39 @@ def refresh(vault: Path, state: Path, command) -> bool:
 
 def main() -> int:
     parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument("vault", type=Path)
+    parser.add_argument("vault", type=Path, help="Markdown vault, or - for decision memory only")
     parser.add_argument("state", type=Path)
     parser.add_argument("builder", type=Path)
+    parser.add_argument("--watch", action="store_true", help="poll for new decisions and documents")
+    parser.add_argument("--interval", type=int, default=30, help="seconds between checks in watch mode")
     args = parser.parse_args()
+    if args.interval < 1:
+        parser.error("--interval must be positive")
+    store = None
+    if os.environ.get("TWINCTX_STORE"):
+        from stores import open_store
+
+        store = open_store()
     try:
-        published = refresh(args.vault, args.state, ["node", str(args.builder), "build"])
-    except BlockingIOError:
-        print("QMD refresh already running")
-        return 0
-    print("QMD index published" if published else "QMD index is current")
-    return 0
+        while True:
+            try:
+                published = refresh(None if str(args.vault) == "-" else args.vault, args.state, ["node", str(args.builder), "build"], store=store)
+                print("QMD index published" if published else "QMD index is current", flush=True)
+            except BlockingIOError:
+                print("QMD refresh already running", flush=True)
+            except (OSError, RuntimeError, ValueError, subprocess.SubprocessError):
+                if not args.watch:
+                    raise
+                print("QMD refresh failed; retrying after the interval", flush=True)
+            if not args.watch:
+                return 0
+            time.sleep(args.interval)
+    finally:
+        if store is not None:
+            if hasattr(store, "close"):
+                store.close()
+            else:
+                store.db.close()
 
 
 if __name__ == "__main__":

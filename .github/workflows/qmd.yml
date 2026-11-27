@@ -4,6 +4,10 @@ on:
   push:
     paths:
       - 'deploy/qmd/**'
+      - 'context/twinctx/qmd_memory.py'
+      - 'context/twinctx/qmd_client.py'
+      - 'context/stores/memory_history.py'
+      - 'context/twinctx/engine.py'
       - 'context/twinctx/project_search.py'
       - 'context/twinctx/qmd_refresh.py'
       - 'context/twinctx/vault_projects.py'
@@ -40,6 +44,7 @@ jobs:
           state="$HARNESS_HOME/qmd"
           mkdir -p "$VAULT_DIR"
           printf '%s\n' '---' 'project: demo' '---' '# Резервирование' 'Резервные копии хранятся сорок пять дней.' > "$VAULT_DIR/archive.md"
+          old=$(twinctx remember 'Срок хранения резервных копий базы составляет тридцать дней.' --about retention --valid-from 2026-01-01)
           python -m twinctx.qmd_refresh "$VAULT_DIR" "$state" deploy/qmd/server.mjs
           node deploy/qmd/server.mjs serve "$state" &
           pid=$!
@@ -52,3 +57,16 @@ jobs:
           source=$(twinctx project-query demo 'Когда удаляют бэкапы?')
           echo "$source"
           [[ "$source" == *'vault/archive.md'* ]]
+          # Correct the rule after index publication. The only vector in memory is still the old decision.
+          new=$(twinctx remember 'Новый норматив: сорок пять суток.' --about retention --valid-from 2026-02-01 --supersedes "$old")
+          export OLD_ID="$old" NEW_ID="$new"
+          python - <<'PYTHON'
+          import json, os, subprocess
+          query = "Когда пора удалять бэкапы?"
+          for at, expected in [("2026-01-15", os.environ["OLD_ID"]), ("2026-03-01", os.environ["NEW_ID"])]:
+              result = json.loads(subprocess.check_output(["twinctx", "query", query, "--json", "--corpus", "memory", "--as-of", at]))
+              items = result["manifest"]["items"]
+              assert [(i["id"], i["via"]) for i in items] == [(expected, "qmd_memory")], result
+              assert items[0]["matched_memory_id"] == os.environ["OLD_ID"]
+              print(at, result["packed"], items[0]["qmd_similarity"])
+          PYTHON

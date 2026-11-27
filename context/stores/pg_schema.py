@@ -16,6 +16,7 @@ create table if not exists twinctx_v1.atoms (
   valid_from text, valid_to text, trust double precision default 1.0, ord integer default 0, supersedes text
 );
 create index if not exists atoms_source on twinctx_v1.atoms(source);
+create index if not exists memory_supersedes on twinctx_v1.atoms(supersedes) where kind='memory';
 create index if not exists atoms_memory_id on twinctx_v1.atoms(id) where kind='memory';
 create table if not exists twinctx_v1.sources (
   source text primary key, corpus text, sha text, indexed_at text, updated text
@@ -33,7 +34,7 @@ create index if not exists edges_dst on twinctx_v1.edges(dst);
 """
 
 
-_SCHEMA_ALL_VERSION = "1"  # поднять при добавлении любой миграции: прогонит полный путь один раз
+_SCHEMA_ALL_VERSION = "2"  # поднять при добавлении любой миграции: прогонит полный путь один раз
 
 
 def _fts_expression(column: str) -> str:

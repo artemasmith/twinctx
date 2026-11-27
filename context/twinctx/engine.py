@@ -20,6 +20,7 @@ from dataclasses import dataclass, field
 from itertools import chain
 from typing import Optional
 
+from .qmd_memory import candidates as memory_candidates, is_current
 from .connectors import is_raw_telegram_source
 from .contracts import Atom, Store, now
 from .reranker import filter_reranked as _filter_reranked
@@ -147,8 +148,13 @@ class Engine:
             fused[i] += 1 / (RRF_K + rank)
         for rank, (i, _) in enumerate(vec):
             fused[i] += 1 / (RRF_K + rank)
+        semantic = memory_candidates(self.store, req, as_of, degraded)
+        memory_hits = {a.id: a for a in semantic}
+        for rank, atom in enumerate(semantic):
+            fused[atom.id] += 1 / (RRF_K + rank)
         cos = dict(vec)
         atoms = self.store.get(list(fused))
+        atoms.update(memory_hits)
         kept = []
         lexical_strength = dict(kw) if online_candidates else {}
         online_rank = {}
@@ -167,32 +173,32 @@ class Engine:
                 if not req.include_memory:
                     counts["filtered_by_kind"] += 1
                     continue
-                if (a.valid_to and a.valid_to <= as_of) or (a.valid_from and a.valid_from > as_of):
+                if i not in memory_hits and not is_current(self.store, a, as_of):
                     counts["filtered_by_time"] += 1
                     continue
             if a.trust < req.min_trust:
                 counts["filtered_by_trust"] += 1
                 continue
             cov = coverage(terms, a)
-            if cov < req.min_coverage and cos.get(i, 0.0) < req.min_cosine:
+            if i not in memory_hits and cov < req.min_coverage and cos.get(i, 0.0) < req.min_cosine:
                 counts["filtered_by_relevance"] += 1
                 continue
             if online_candidates:
                 labels = words(f"{a.title} {a.heading} {a.source.rsplit('/', 1)[-1]}")
                 label_coverage = sum(any(label.startswith(term) for label in labels) for term in terms) / len(terms)
-                if len(terms) >= 4 and cov * len(terms) <= 2 and not label_coverage:
+                if i not in memory_hits and len(terms) >= 4 and cov * len(terms) <= 2 and not label_coverage:
                     counts["filtered_by_relevance"] += 1
                     continue
                 # A named source is stronger evidence than an incidental mention in a note.
-                online_rank[i] = lexical_strength[i] + 3 * cov + 4 * label_coverage
-            a.score, a.extra = score, {"coverage": round(cov, 2), "cosine": round(cos.get(i, 0.0), 3)}
+                online_rank[i] = lexical_strength.get(i, 0) + a.extra.get("qmd_similarity", 0) + 3 * cov + 4 * label_coverage
+            a.score, a.extra = score, {**a.extra, "coverage": round(cov, 2), "cosine": round(cos.get(i, 0.0), 3)}
             kept.append(a)
         counts["candidates"] = len(fused)
         if online_candidates:
             kept.sort(key=lambda atom: online_rank[atom.id], reverse=True)
             by_span = {}
             for atom in kept:
-                by_span.setdefault((atom.source, atom.start_line // 40), atom)
+                by_span.setdefault((atom.source, atom.id if atom.kind == "memory" else atom.start_line // 40), atom)
             kept = list(by_span.values())[:60]
         if checkpoint is not None and kept:
             checkpoint((kept[: req.k], {"counts": counts.copy(), "degraded": list(degraded), "terms": terms}))
@@ -333,6 +339,8 @@ class Engine:
             a = self.store.get([i]).get(i)
             if not a or is_raw_telegram_source(a.source):
                 continue
+            if a.kind == "memory" and not is_current(self.store, a, as_of):
+                continue
             a.via = "graph"
             a.extra = {"hop": hop, "from": origin,
                        "edge": {"kind": e["kind"], "basis": e["basis"], "provenance": e["provenance"],
@@ -359,7 +367,7 @@ class Engine:
         seen_spans = set()
         for a in seeds + extra:
             self._check_deadline()
-            span = (a.source, a.start_line // 40)
+            span = (a.source, a.id if a.kind == "memory" else a.start_line // 40)
             if span in seen_spans:
                 counts["filtered_as_duplicate"] += 1
                 continue

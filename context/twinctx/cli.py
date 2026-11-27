@@ -72,6 +72,7 @@ def cmd_query(a):
     res = eng.assemble(
         AssembleRequest(
             query=a.query,
+            as_of=a.as_of,
             budget_tokens=a.budget,
             corpora=a.corpus or [],
             graph=a.graph,
@@ -323,6 +324,7 @@ def main():
     sub.add_parser("index").set_defaults(fn=cmd_index)
     q = sub.add_parser("query")
     q.add_argument("query")
+    q.add_argument("--as-of", default="", help="ISO date or timestamp for decision validity")
     q.add_argument("--budget", type=int, default=2500)
     q.add_argument("--corpus", action="append")
     gg = q.add_mutually_exclusive_group()

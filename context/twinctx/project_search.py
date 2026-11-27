@@ -18,8 +18,6 @@ import logging
 import os
 import re
 import urllib.error
-import urllib.parse
-import urllib.request
 from pathlib import Path
 from threading import BoundedSemaphore
 from time import monotonic
@@ -42,20 +40,9 @@ _QMD = "Резервный поиск QMD сейчас недоступен."
 _BUSY = "Поиск по проекту занят. Попробуй ещё раз чуть позже."
 
 
-class _NoRedirect(urllib.request.HTTPRedirectHandler):
-    def redirect_request(self, req, fp, code, msg, headers, newurl):
-        return None
-
-
 def _qmd_search(project: str, query: str, timeout: float) -> list[dict]:
-    params = urllib.parse.urlencode({"project": project, "q": query})
-    opener = urllib.request.build_opener(urllib.request.ProxyHandler({}), _NoRedirect())
-    with opener.open(f"http://127.0.0.1:26358/vsearch?{params}", timeout=timeout) as response:
-        payload = json.loads(response.read(32_768))
-    hits = payload["hits"]
-    if not isinstance(hits, list) or len(hits) > 5:
-        raise ValueError("qmd_invalid_reply")
-    return hits
+    from .qmd_client import hits
+    return hits("/vsearch", {"project": project, "q": query}, timeout)
 
 
 def _overlap(terms: list[str], text: str) -> int:

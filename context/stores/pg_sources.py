@@ -24,6 +24,7 @@ from twinctx.connectors import TELEGRAM_ARCHIVE_MESSAGE_PREFIX, TELEGRAM_BUSINES
 from twinctx.contracts import COLS, Atom, now
 from twinctx.text import quoted_subject_terms
 
+from .memory_history import family_query
 from .pg_bm25 import (  # noqa: F401 — фасад волны 5: тесты зовут pg_sources.<имя>
     _BM25_B,
     _BM25_K1,
@@ -92,6 +93,11 @@ class _PgSearchReads(PgBm25Mixin):
         values = {c: (v if v is not None else Atom.__dataclass_fields__[c].default) for c, v in zip(COLS, row[:-1])}
         values["text"] = restore_text(values["text"], row[-1])
         return Atom(**values)
+
+    def memory_family(self, seed: str) -> list[Atom]:
+        with self._lock:
+            rows = self._run_read(family_query("twinctx_v1.atoms", raw_text=True), seed=seed)
+            return [self._atom(row) for row in rows]
 
     def get(self, ids: list[str]) -> dict[str, Atom]:
         if not ids:

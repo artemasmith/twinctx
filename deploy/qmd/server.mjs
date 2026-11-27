@@ -70,7 +70,19 @@ async function readManifest(directory) {
       }
     }
   }
-  return manifest.files;
+  if (manifest.memory !== undefined) {
+    if (!record(manifest.memory)) throw Error('invalid memory manifest');
+    for (const [path, item] of Object.entries(manifest.memory)) {
+      if (!record(item) || typeof item.id !== 'string' || !item.id
+        || !sha256.test(item.sha256) || path !== createHash('sha256').update(item.id).digest('hex') + '.md') {
+        throw Error('invalid memory identity');
+      }
+    }
+    manifest.files['@memory'] = Object.fromEntries(
+      Object.entries(manifest.memory).map(([path, item]) => [path, item.sha256])
+    );
+  }
+  return { files: manifest.files, memory: manifest.memory };
 }
 
 async function inspectSnapshot(directory, files) {
@@ -99,7 +111,7 @@ async function inspectSnapshot(directory, files) {
 async function build(path) {
   const directory = await realpath(path);
   const dbPath = join(directory, 'index.sqlite');
-  const files = await readManifest(directory);
+  const { files } = await readManifest(directory);
   const collections = await inspectSnapshot(directory, files);
   // An empty snapshot is a valid generation after the last document is removed.
   const store = await createStore({ dbPath, config: { collections, models: { embed: model } } });
@@ -156,13 +168,13 @@ async function serve(path) {
     if (current?.directory === directory) return current;
 
     const dbPath = join(directory, 'index.sqlite');
-    const files = await readManifest(directory);
+    const { files, memory } = await readManifest(directory);
     const previous = current;
     current = undefined;
     if (previous) await previous.store.close();
 
     const store = await createStore({ dbPath });
-    current = { directory, files, store };
+    current = { directory, files, memory, store };
     return current;
   }
 
@@ -205,10 +217,11 @@ async function serve(path) {
       }
       return;
     }
-    const project = url.searchParams.get('project');
+    const memoryQuery = url.pathname === '/memory';
+    const project = memoryQuery ? '@memory' : url.searchParams.get('project');
     const question = url.searchParams.get('q')?.trim();
-    if (request.method !== 'GET' || url.pathname !== '/vsearch'
-      || !project || !projectSlug.test(project) || !question || question.length > 500) {
+    if (request.method !== 'GET' || (!memoryQuery && url.pathname !== '/vsearch')
+      || !project || (!memoryQuery && !projectSlug.test(project)) || !question || question.length > 500) {
       reply(response, 400);
       return;
     }
@@ -231,6 +244,7 @@ async function serve(path) {
         return;
       }
       const { files, store } = current;
+      if (memoryQuery && !current.memory) throw Error("memory index not configured");
       const hits = [];
       if (Object.hasOwn(files, project) && Object.keys(files[project]).length > 0) {
         const collection = collectionName(project);
@@ -247,7 +261,12 @@ async function serve(path) {
             throw Error('result differs from manifest');
           }
           if (hits.length < limit && !hits.some((hit) => hit.path === source)) {
-            hits.push({ path: source, sha256: files[project][source] });
+            const hit = { path: source, sha256: files[project][source] };
+            if (memoryQuery) {
+              hit.id = current.memory[source].id;
+              hit.score = result.score;
+            }
+            hits.push(hit);
           }
         }
       }
