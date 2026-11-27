@@ -1,0 +1,35 @@
+[build-system]
+requires = ["hatchling>=1.27"]
+build-backend = "hatchling.build"
+
+[project]
+name = "twinctx"
+version = "0.1.0"
+description = "Local context retrieval and memory for AI agents"
+readme = "README.md"
+requires-python = ">=3.11"
+license = "PolyForm-Noncommercial-1.0.0"
+license-files = ["LICENSE", "NOTICE"]
+authors = [{name = "Artem Kuznetsov"}]
+dependencies = []
+
+[project.urls]
+Source = "https://github.com/artemasmith/twinctx"
+"Commercial licensing" = "https://t.me/artemainsider"
+
+[project.scripts]
+twinctx = "twinctx.cli:main"
+twinctx-mcp = "twinctx.mcp_server:main"
+
+[project.optional-dependencies]
+mcp = ["mcp>=1.10,<3"]
+postgres = ["pg8000>=1.30"]
+embeddings = ["numpy>=1.26", "fastembed>=0.4"]
+privacy = ["natasha>=1.6"]
+test = ["pytest>=8", "numpy>=1.26", "mcp>=1.10,<3"]
+
+[tool.hatch.build.targets.wheel]
+packages = ["context/twinctx", "context/stores", "context/privacy"]
+
+[tool.hatch.build.targets.sdist]
+include = ["/context", "/tests", "/LICENSE", "/NOTICE", "/README.md", "/pyproject.toml"]
